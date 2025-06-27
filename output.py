@@ -85,3 +85,110 @@ class CLIOutputManager:
         print("\033[31m Since enabling IPv6 did not help, "
               "your network likely does not currently support IPv6. "
               "Please contact your network administrator to enable it.\033[0m")
+
+    def print_interface_status(interface: str, ipv4: str = None, ipv6: str = None):
+        def color(text, code):
+            return f"\033[{code}m{text}\033[0m"
+
+        def classify_ipv6(ip: str) -> str:
+            if not ip:
+                return "none"
+            if ip == "::1":
+                return "loopback"
+            if ip.startswith("fe80"):
+                return "link-local"
+            if ip.startswith("2") or ip.startswith("3"):
+                return "global"
+            return "other"
+
+        # IPv4 formatting
+        ipv4_display = f"IPv4: {ipv4}" if ipv4 else "IPv4: NONE"
+        ipv4_color_code = "32" if ipv4 else "31"
+        ipv4_str = color(f"| {ipv4_display.ljust(18)} |", ipv4_color_code)
+
+        # IPv6 classification and formatting
+        ipv6_scope = classify_ipv6(ipv6)
+        if ipv6_scope == "global":
+            ipv6_color = "32"
+            comment = "This interface is fully IPv6-capable"
+            comment_color = "32"
+        elif ipv6_scope == "link-local":
+            ipv6_color = "33"
+            comment = (
+                "This interface supports IPv6, but your network doesn't offer global access"
+                if ipv4 else
+                "This interface is likely offline or only for local connectivity"
+            )
+            comment_color = "33" if ipv4 else "31"
+        elif ipv6_scope == "none":
+            ipv6_color = "31"
+            comment = (
+                "This interface does not support IPv6 - but we can try enabling it"
+                if ipv4 else
+                "This interface is offline"
+            )
+            comment_color = "36" if ipv4 else "31"
+        else:
+            ipv6_color = "36"
+            comment = "Unknown or mixed state"
+            comment_color = "33"
+
+        ipv6_display = f"IPv6: {ipv6}" if ipv6 else "IPv6: NONE"
+        ipv6_str = color(f"| {ipv6_display.ljust(39)} |", ipv6_color)
+
+        comment_str = color(comment, comment_color)
+
+        # Output with alignment
+        print(
+            f"INTERFACE: {interface.ljust(12)}  {ipv4_str}  {ipv6_str}  {comment_str}"
+        )
+
+
+    @staticmethod
+    def print_phase_1():
+        print("\033[34m Phase 1: Checking DNS connectivity on active interfaces...\033[0m")
+
+    @staticmethod
+    def banner_phase_1():
+        print("""\033[36m
+    ╔════════════════════════════════════════════════════╗
+    ║                     PHASE 1                        ║
+    ║             Check YOUR SYSTEM compatibility        ║
+    ╚════════════════════════════════════════════════════╝
+    \033[0m""")
+
+    @staticmethod
+    def banner_phase_2():
+        print("""\033[36m
+    ╔════════════════════════════════════════════════════╗
+    ║                     PHASE 2                        ║
+    ║             Check Local (DHCP) DNS Settings        ║
+    ╚════════════════════════════════════════════════════╝
+    \033[0m""")
+
+    @staticmethod
+    def banner_phase_3():
+        print("""\033[36m
+    ╔════════════════════════════════════════════════════╗
+    ║                     PHASE 3                        ║
+    ║              Check Public DNS Reachability         ║
+    ╚════════════════════════════════════════════════════╝
+    \033[0m""")
+
+    @staticmethod
+    def banner_phase_4():
+        print("""\033[36m
+    ╔════════════════════════════════════════════════════╗
+    ║                     PHASE 4                        ║
+    ║             Check Real IPv6 Website Access         ║
+    ╚════════════════════════════════════════════════════╝
+    \033[0m""")
+
+    @staticmethod
+    def banner_phase_5():
+        print("""\033[36m
+    ╔════════════════════════════════════════════════════╗
+    ║                     PHASE 5                        ║
+    ║                Report and Attempt Fix              ║
+    ╚════════════════════════════════════════════════════╝
+    \033[0m""")

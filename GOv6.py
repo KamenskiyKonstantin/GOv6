@@ -35,8 +35,18 @@ class NetworkInterfaces:
             return None
         for addr in addrs:
             if addr.family == family:
-                return addr.address.split('%')[0]  # Strip zone index if present
+                return addr.address.split('%')[0]
         return None
+
+    def get_ip_list(self, interfaces, verbose=False):
+        ip_list = {}
+        for iface, stats in interfaces:
+            v4_ip = self.get_ip(iface, socket.AF_INET)
+            v6_ip = self.get_ip(iface, socket.AF_INET6)
+            if verbose:
+                CLIOutputManager.print_interface_status(iface, v4_ip, v6_ip)
+            ip_list[iface] = (v4_ip, v6_ip)
+        return ip_list
 
 
 import subprocess
@@ -175,18 +185,82 @@ class DNSProbe:
                     "\033[32m|  DNSv6 Reachable  |\033[0m" if v6_result['success']
                     else f"\033[31m| DNSv6 Unreachable | ERROR: {v6_result.get('error', '')} |\033[0m",
                 )
+            sleep(0.5)
         return (v4_success, v6_success)
+
+def check_interface_ips():
+    IPmap = netinfo.get_ip_list(active_interfaces, verbose=True)
+    not_ipv6_capable = [iface for iface, (v4, v6) in IPmap.items() if v4 and not v6]
+    if not_ipv6_capable:
+        print("\033[36mWe can now add IPv6 to these interfaces: \033[0m")
+        for iface in not_ipv6_capable:
+            print(f"- {iface}")
+        print("\033[36m\nShould we enable IPv6 support? This will cause your connection reboot "
+              "(This will require admin privileges) (y/N)\033[0m")
+        if input().strip().lower() not in ['y', 'yes', '1']:
+            print("\033[31mExiting without changes.\033[0m")
+            exit(0)
+        else:
+            print("\033[32mAttempting to enable IPv6 on interfaces.\033[0m")
+            enabler = IPv6Enabler(not_ipv6_capable)
+            results = enabler.enable_ipv6_on_all()
+
+            for iface, result in results.items():
+                status = "\033[32mOK\033[0m" if result["success"] else "\033[31mFAILED\033[0m"
+                print(f"{status} {iface}: {result['message']}")
+                sleep(1)
+            check_interface_ips()
+    else:
+        print("\033[32mAll interfaces already support IPv6!\033[0m")
+
+        support_ipv6_interfaces = [iface for iface, (v4, v6) in IPmap.items() if v6 and v4]
+        # destroy local IPs
+        for item in support_ipv6_interfaces:
+            if IPmap[item][1].startswith("fe80") or IPmap[item][1] == "::1":
+                print(f"\033[31mRemoving link-local IPv6 address from {item}\033[0m")
+                support_ipv6_interfaces.remove(item)
+
+        if not support_ipv6_interfaces:
+            print("\033[31m Unfortunately, your computer is ready to use IPv6, but the network is not\033[0m")
+            exit(1)
+
 
 
 if __name__ == "__main__":
     print("GOv6 - IPv6 Switch Toolkit")
-    print("Listing active network interfaces:")
+
+    CLIOutputManager.print_phase_1()
+
+    print("Let's see what network interfaces your computer has")
     netinfo = NetworkInterfaces()
     active_interfaces = netinfo.list_active_interfaces(verbose=True)
 
+    # Check if there are any active interfaces
+    if not active_interfaces:
+        print("\033[31mERROR: No active network interfaces found.\033[0m")
+        print("\033[31mPlease check your network connections.\033[0m")
+        exit(1)
+    print()
+
+    # check which have internet access
+    print("\033[36m\nNow let us see if your computer already supports IPv6\n\033[0m")
+    check_interface_ips()
+
+
+
+
+
+
+
+
+
+
+
     DNSv6_reachable = []
     DNSv4_reachable = []
-    has_enabled_flag = False
+
+    # check interfaces for IPv6 Support
+
 
     while not DNSv6_reachable:
         print("\nChecking DNS connectivity on active interfaces:\n")
@@ -204,6 +278,7 @@ if __name__ == "__main__":
             else:
                 DNSv6_reachable.append(iface_name)
                 CLIOutputManager.print_ipv6_success()
+            sleep(2)
 
         if not DNSv6_reachable:
             CLIOutputManager.show_all_interfaces_failure()
@@ -211,7 +286,6 @@ if __name__ == "__main__":
                 CLIOutputManager.print_ipv4_missing()
                 exit(1)
 
-            CLIOutputManager.print_ipv6_enable_failed_message()
             CLIOutputManager.prompt_ipv6_enable()
             user_input = input().strip().lower()
             if user_input == 'y':
