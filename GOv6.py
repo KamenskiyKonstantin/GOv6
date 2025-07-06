@@ -211,7 +211,7 @@ def check_interface_ips():
                 sleep(1)
             check_interface_ips()
     else:
-        print("\033[32mAll interfaces already support IPv6!\033[0m")
+        print("\033[32mAll online interfaces already support IPv6!\033[0m")
 
         support_ipv6_interfaces = [iface for iface, (v4, v6) in IPmap.items() if v6 and v4]
         # destroy local IPs
@@ -224,6 +224,10 @@ def check_interface_ips():
             print("\033[31m Unfortunately, your computer is ready to use IPv6, but the network is not\033[0m")
             exit(1)
 
+def lookup_online_interfaces():
+    IPmap = netinfo.get_ip_list(active_interfaces, verbose=True)
+    online_interfaces = [(iface, (v4, v6)) for iface, (v4, v6) in IPmap.items() if v4]
+    return online_interfaces
 
 
 if __name__ == "__main__":
@@ -234,6 +238,7 @@ if __name__ == "__main__":
     print("Let's see what network interfaces your computer has")
     netinfo = NetworkInterfaces()
     active_interfaces = netinfo.list_active_interfaces(verbose=True)
+    online_interfaces = lookup_online_interfaces()
 
     # Check if there are any active interfaces
     if not active_interfaces:
@@ -246,16 +251,6 @@ if __name__ == "__main__":
     print("\033[36m\nNow let us see if your computer already supports IPv6\n\033[0m")
     check_interface_ips()
 
-
-
-
-
-
-
-
-
-
-
     DNSv6_reachable = []
     DNSv4_reachable = []
 
@@ -264,7 +259,7 @@ if __name__ == "__main__":
 
     while not DNSv6_reachable:
         print("\nChecking DNS connectivity on active interfaces:\n")
-        for iface_name, _ in active_interfaces:
+        for iface_name, _ in online_interfaces:
             print(f"Checking public DNS servers for interface: {iface_name}")
             probe = DNSProbe(iface_name, netinfo)
             DNSv4, DNSv6 = probe.check_dns_connectivity(PUBLIC_DNS_SERVERS, verbose=True)

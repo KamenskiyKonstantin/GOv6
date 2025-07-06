@@ -192,3 +192,4 @@ class CLIOutputManager:
     ║                Report and Attempt Fix              ║
     ╚════════════════════════════════════════════════════╝
     \033[0m""")
+
