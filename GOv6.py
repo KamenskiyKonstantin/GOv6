@@ -35,7 +35,11 @@ class NetworkInterfaces:
             return None
         for addr in addrs:
             if addr.family == family:
-                return addr.address.split('%')[0]
+                ip = addr.address.split('%')[0]
+                if family == socket.AF_INET6:
+                    if ip.startswith("fe80") or ip == "::1":
+                        continue  # skip link-local and loopback
+                return ip
         return None
 
     def get_ip_list(self, interfaces, verbose=False):
