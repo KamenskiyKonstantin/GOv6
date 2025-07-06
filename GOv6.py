@@ -225,7 +225,7 @@ def check_interface_ips():
             exit(1)
 
 def lookup_online_interfaces():
-    IPmap = netinfo.get_ip_list(active_interfaces, verbose=True)
+    IPmap = netinfo.get_ip_list(active_interfaces, verbose=False)
     online_interfaces = [(iface, (v4, v6)) for iface, (v4, v6) in IPmap.items() if v4]
     return online_interfaces
 
@@ -238,7 +238,7 @@ if __name__ == "__main__":
     print("Let's see what network interfaces your computer has")
     netinfo = NetworkInterfaces()
     active_interfaces = netinfo.list_active_interfaces(verbose=True)
-    online_interfaces = lookup_online_interfaces()
+
 
     # Check if there are any active interfaces
     if not active_interfaces:
@@ -250,6 +250,7 @@ if __name__ == "__main__":
     # check which have internet access
     print("\033[36m\nNow let us see if your computer already supports IPv6\n\033[0m")
     check_interface_ips()
+    online_interfaces = lookup_online_interfaces()
 
     DNSv6_reachable = []
     DNSv4_reachable = []
