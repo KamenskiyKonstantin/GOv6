@@ -1,9 +1,13 @@
+import platform
 import socket
+import subprocess
 from time import sleep
+
 import dns.message
 import dns.query
-from psutil import net_if_stats, net_if_addrs
 
+from DNSConfig import DNSConfigChecker
+from NetworkInterfaces import NetworkInterfaces
 from output import CLIOutputManager
 
 PUBLIC_DNS_SERVERS = {
@@ -13,50 +17,6 @@ PUBLIC_DNS_SERVERS = {
     "OpenDNS": ("208.67.222.222", "2620:119:35::35"),
     "CleanBrowsing": ("185.228.168.9", "2a0d:2a00:1::"),
 }
-
-class NetworkInterfaces:
-    def __init__(self):
-        self.interfaces_stats = net_if_stats()
-        self.interfaces_addrs = net_if_addrs()
-
-    def list_active_interfaces(self, verbose=True):
-        active = []
-        for iface, stats in self.interfaces_stats.items():
-            if stats.isup:
-                active.append((iface, stats))
-            if verbose:
-                status = "\033[32m| ONLINE |\033[0m" if stats.isup else "\033[31m| OFFLINE |\033[0m"
-                print(f"Interface: {iface}".ljust(30), status)
-        return active
-
-    def get_ip(self, interface_name, family=socket.AF_INET):
-        addrs = self.interfaces_addrs.get(interface_name)
-        if not addrs:
-            return None
-        for addr in addrs:
-            if addr.family == family:
-                ip = addr.address.split('%')[0]
-                if family == socket.AF_INET6:
-                    if ip.startswith("fe80") or ip == "::1":
-                        continue  # skip link-local and loopback
-                return ip
-        return None
-
-    def get_ip_list(self, interfaces, verbose=False):
-        ip_list = {}
-        for iface, stats in interfaces:
-            v4_ip = self.get_ip(iface, socket.AF_INET)
-            v6_ip = self.get_ip(iface, socket.AF_INET6)
-            if verbose:
-                CLIOutputManager.print_interface_status(iface, v4_ip, v6_ip)
-            ip_list[iface] = (v4_ip, v6_ip)
-        return ip_list
-
-
-import subprocess
-import platform
-import socket
-
 
 class IPv6Enabler:
     def __init__(self, interfaces: list[str]):
@@ -98,7 +58,8 @@ class IPv6Enabler:
         except FileNotFoundError:
             return False, "networksetup command not found"
 
-    def _get_service_name_from_interface(self, interface: str):
+    @staticmethod
+    def _get_service_name_from_interface(interface: str):
         try:
             output = subprocess.check_output(["networksetup", "-listallhardwareports"]).decode()
             blocks = output.strip().split("\n\n")
@@ -124,12 +85,20 @@ class IPv6Enabler:
     @staticmethod
     def bounce_interface_mac(interface):
         try:
-            subprocess.check_call(["sudo", "-S", "ifconfig", interface, "down", ])
-            subprocess.check_call(["sudo", "-S", " ifconfig", interface, "up", ])
+
+            service_name = IPv6Enabler._get_service_name_from_interface(interface)
+            if not service_name:
+                print(f"\033[31mFailed to get service name for interface {interface}\033[0m")
+                print("\033[31mERROR: Cannot bounce interface without service name.\033[0m")
+                return
+            print("\033[36mBouncing interface to trigger IPv6 rebind...\033[0m")
+            subprocess.check_call(["networksetup", "-setnetworkserviceenabled",
+                                   service_name, "off"])
+            subprocess.check_call(["networksetup", "-setnetworkserviceenabled",
+                                   service_name, "on"])
             return True, f"Bounced interface {interface} to trigger IPv6 rebind"
         except subprocess.CalledProcessError as e:
             return False, f"Failed to bounce interface {interface}: {e}"
-
 
 class DNSProbe:
     def __init__(self, interface_name: str, netinfo: NetworkInterfaces, timeout=2):
@@ -192,9 +161,11 @@ class DNSProbe:
             sleep(0.5)
         return (v4_success, v6_success)
 
+
+
 def check_interface_ips():
     IPmap = netinfo.get_ip_list(active_interfaces, verbose=True)
-    not_ipv6_capable = [iface for iface, (v4, v6) in IPmap.items() if v4 and not v6]
+    not_ipv6_capable = [iface for iface, (v4, v6) in IPmap.items() if v4 and not v6 and not iface.startswith("lo") and "tun" not in iface]
     if not_ipv6_capable:
         print("\033[36mWe can now add IPv6 to these interfaces: \033[0m")
         for iface in not_ipv6_capable:
@@ -217,91 +188,42 @@ def check_interface_ips():
     else:
         print("\033[32mAll online interfaces already support IPv6!\033[0m")
 
-        support_ipv6_interfaces = [iface for iface, (v4, v6) in IPmap.items() if v6 and v4]
-        # destroy local IPs
-        for item in support_ipv6_interfaces:
-            if IPmap[item][1].startswith("fe80") or IPmap[item][1] == "::1":
-                print(f"\033[31mRemoving link-local IPv6 address from {item}\033[0m")
-                support_ipv6_interfaces.remove(item)
-
-        if not support_ipv6_interfaces:
-            print("\033[31m Unfortunately, your computer is ready to use IPv6, but the network is not\033[0m")
-            exit(1)
 
 def lookup_online_interfaces():
     IPmap = netinfo.get_ip_list(active_interfaces, verbose=False)
-    online_interfaces = [(iface, (v4, v6)) for iface, (v4, v6) in IPmap.items() if v4]
+    online_interfaces = [(iface, (v4, v6)) for iface, (v4, v6) in IPmap.items() if v4 and "lo" not in iface]
     return online_interfaces
 
 
 if __name__ == "__main__":
-    print("GOv6 - IPv6 Switch Toolkit")
+    CLIOutputManager.print_banner()
 
     CLIOutputManager.print_phase_1()
 
-    print("Let's see what network interfaces your computer has")
+    CLIOutputManager.print_checking_interfaces()
     netinfo = NetworkInterfaces()
     active_interfaces = netinfo.list_active_interfaces(verbose=True)
 
-
-    # Check if there are any active interfaces
     if not active_interfaces:
-        print("\033[31mERROR: No active network interfaces found.\033[0m")
-        print("\033[31mPlease check your network connections.\033[0m")
+        CLIOutputManager.print_no_active_interfaces()
         exit(1)
-    print()
 
     # check which have internet access
-    print("\033[36m\nNow let us see if your computer already supports IPv6\n\033[0m")
+    CLIOutputManager.print_ipv6_intro()
     check_interface_ips()
     online_interfaces = lookup_online_interfaces()
 
-    DNSv6_reachable = []
-    DNSv4_reachable = []
+    # Begin DHCP Check
+    if not online_interfaces:
+        CLIOutputManager.print_no_active_interfaces()
+        exit(1)
 
-    # check interfaces for IPv6 Support
+    CLIOutputManager.print_phase_2()
 
+    print("\033[36mChecking your DNS configurations\033[0m")
+    dns_checker = DNSConfigChecker(online_interfaces, netinfo)
+    resolvers = dns_checker.get_resolvers()
+    for resolver in resolvers:
+        CLIOutputManager.print_resolver_status(resolver)
+    CLIOutputManager.print_phase_3()
 
-    while not DNSv6_reachable:
-        print("\nChecking DNS connectivity on active interfaces:\n")
-        for iface_name, _ in online_interfaces:
-            print(f"Checking public DNS servers for interface: {iface_name}")
-            probe = DNSProbe(iface_name, netinfo)
-            DNSv4, DNSv6 = probe.check_dns_connectivity(PUBLIC_DNS_SERVERS, verbose=True)
-
-            if DNSv4:
-                DNSv4_reachable.append(iface_name)
-                CLIOutputManager.print_ipv4_success()
-
-            if not DNSv6:
-                CLIOutputManager.show_interface_down_warning()
-            else:
-                DNSv6_reachable.append(iface_name)
-                CLIOutputManager.print_ipv6_success()
-            sleep(2)
-
-        if not DNSv6_reachable:
-            CLIOutputManager.show_all_interfaces_failure()
-            if not DNSv4_reachable:
-                CLIOutputManager.print_ipv4_missing()
-                exit(1)
-
-            CLIOutputManager.prompt_ipv6_enable()
-            user_input = input().strip().lower()
-            if user_input == 'y':
-                CLIOutputManager.print_ipv6_attempting_enable()
-                enabler = IPv6Enabler(DNSv4_reachable)
-                results = enabler.enable_ipv6_on_all()
-
-                for iface, result in results.items():
-                    status = "\033[32mOK\033[0m" if result["success"] else "\033[31mFAILED\033[0m"
-                    if result["success"]:
-                        has_enabled_flag = True
-                    print(f"{status} {iface}: {result['message']}")
-                    sleep(1)
-
-            else:
-                CLIOutputManager.print_ipv6_skipped()
-                exit(1)
-        else:
-            CLIOutputManager.show_all_interfaces_success(DNSv6_reachable)
